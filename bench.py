@@ -6,7 +6,7 @@ from contextlib import nullcontext
 import numpy as np
 import time
 import torch
-from model import GPTConfig, GPT
+from nanogpt.model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
 batch_size = 12

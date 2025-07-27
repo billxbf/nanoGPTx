@@ -1,13 +1,24 @@
 
-# nanoGPT
+# nanoGPTx
 
 ![nanoGPT](assets/nanogpt.jpg)
 
-The simplest, fastest repository for training/finetuning medium-sized GPTs. It is a rewrite of [minGPT](https://github.com/karpathy/minGPT) that prioritizes teeth over education. Still under active development, but currently the file `train.py` reproduces GPT-2 (124M) on OpenWebText, running on a single 8XA100 40GB node in about 4 days of training. The code itself is plain and readable: `train.py` is a ~300-line boilerplate training loop and `model.py` a ~300-line GPT model definition, which can optionally load the GPT-2 weights from OpenAI. That's it.
+<!-- The simplest, fastest repository for training/finetuning medium-sized GPTs. It is a rewrite of [minGPT](https://github.com/karpathy/minGPT) that prioritizes teeth over education. Still under active development, but currently the file `train.py` reproduces GPT-2 (124M) on OpenWebText, running on a single 8XA100 40GB node in about 4 days of training. The code itself is plain and readable: `train.py` is a ~300-line boilerplate training loop and `model.py` a ~300-line GPT model definition, which can optionally load the GPT-2 weights from OpenAI. That's it. -->
 
-![repro124m](assets/gpt2_124M_loss.png)
 
-Because the code is so simple, it is very easy to hack to your needs, train new models from scratch, or finetune pretrained checkpoints (e.g. biggest one currently available as a starting point would be the GPT-2 1.3B model from OpenAI).
+**NanoGPTx** is a clean overwrite from Andrej's [nanoGPT](https://github.com/karpathy/nanoGPT), implementing state-of-the-art recipes commonly adopted by modern LLM architectures such as [Qwen3](https://arxiv.org/abs/2505.09388). The code inherits nanoGPT's plain and hackable style and are tested on the same training data (OpenWebText) for performance comparison.
+
+
+- [ ] RoPE (Rotary Positional Embeddings)
+- [ ] GQA (Grouped Query Attention)
+- [ ] SwiGLU
+- [ ] RMSNorm 
+- [ ] MoE (Mixture of Expert)
+- [ ] Hybrid SSM (State Space Model)
+
+
+<!-- ![repro124m](assets/gpt2_124M_loss.png) -->
+
 
 ## install
 
