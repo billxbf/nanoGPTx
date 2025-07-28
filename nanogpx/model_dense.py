@@ -1,10 +1,11 @@
 """
-Full definition of a GPT Language Model, all of it in this single file.
+Enhanced GPT (dense), all in this single file.
 References:
 1) the official GPT-2 TensorFlow implementation released by OpenAI:
 https://github.com/openai/gpt-2/blob/master/src/model.py
 2) huggingface/transformers PyTorch implementation:
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+https://github.com/huggingface/transformers/blob/v4.53.3/src/transformers/models/qwen3/modeling_qwen3.py
 """
 
 import math
@@ -25,6 +26,25 @@ class LayerNorm(nn.Module):
 
     def forward(self, input):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+    
+class RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        """
+        Qwen3RMSNorm is equivalent to T5LayerNorm
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 class CausalSelfAttention(nn.Module):
 

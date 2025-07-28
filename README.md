@@ -1,13 +1,15 @@
 
-# nanoGPTx
+# nanoGPX
+
+Cleanest collections of modern LLM architectures and recipes (MoE, SSM, RoPE, RMSNorm, etc.) in [nanoGPT](https://github.com/karpathy/nanoGPT) style.
 
 ![nanoGPT](assets/nanogpt.jpg)
+
 
 <!-- The simplest, fastest repository for training/finetuning medium-sized GPTs. It is a rewrite of [minGPT](https://github.com/karpathy/minGPT) that prioritizes teeth over education. Still under active development, but currently the file `train.py` reproduces GPT-2 (124M) on OpenWebText, running on a single 8XA100 40GB node in about 4 days of training. The code itself is plain and readable: `train.py` is a ~300-line boilerplate training loop and `model.py` a ~300-line GPT model definition, which can optionally load the GPT-2 weights from OpenAI. That's it. -->
 
 
-**NanoGPTx** is a clean overwrite from Andrej's [nanoGPT](https://github.com/karpathy/nanoGPT), implementing state-of-the-art recipes commonly adopted by modern LLM architectures such as [Qwen3](https://arxiv.org/abs/2505.09388). The code inherits nanoGPT's plain and hackable style and are tested on the same training data (OpenWebText) for performance comparison.
-
+**NanoGPTx** overwrites Andrej's [nanoGPT](https://github.com/karpathy/nanoGPT), implementing state-of-the-art recipes commonly adopted by modern LLM architectures such as [Qwen3](https://arxiv.org/abs/2505.09388). The code inherits nanoGPT's single-file and hackable style and are tested on the same training datasets (OpenWebText) for performance comparison.
 
 - [ ] RoPE (Rotary Positional Embeddings)
 - [ ] GQA (Grouped Query Attention)
