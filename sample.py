@@ -7,10 +7,12 @@ from contextlib import nullcontext
 import torch
 import tiktoken
 from nanogpt.model import GPTConfig, GPT
+from nanogpx.model_dense import GPXConfig, GPX
 
 # -----------------------------------------------------------------------------
 init_from = 'resume' # either 'resume' (from an out_dir) or a gpt2 variant (e.g. 'gpt2-xl')
 out_dir = 'out' # ignored if init_from is not 'resume'
+model_type = 'gpt' # 'gpt' or 'gpx-dense'/'gpx'/'dense' - should match the model used during training
 start = "\n" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE:prompt.txt"
 num_samples = 10 # number of samples to draw
 max_new_tokens = 500 # number of tokens generated in each sample
@@ -31,13 +33,21 @@ device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.aut
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
+# model class and config class based on the model type
+if model_type == 'gpt':
+    model_cls, cfg_cls = GPT, GPTConfig
+elif model_type in ['gpx-dense', 'gpx', 'dense']:
+    model_cls, cfg_cls = GPX, GPXConfig
+else:
+    raise ValueError(f"Unknown model type: {model_type}")
+
 # model
 if init_from == 'resume':
     # init from a model saved in a specific directory
     ckpt_path = os.path.join(out_dir, 'ckpt.pt')
     checkpoint = torch.load(ckpt_path, map_location=device)
-    gptconf = GPTConfig(**checkpoint['model_args'])
-    model = GPT(gptconf)
+    model_conf = cfg_cls(**checkpoint['model_args'])
+    model = model_cls(model_conf)
     state_dict = checkpoint['model']
     unwanted_prefix = '_orig_mod.'
     for k,v in list(state_dict.items()):
@@ -45,7 +55,9 @@ if init_from == 'resume':
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
     model.load_state_dict(state_dict)
 elif init_from.startswith('gpt2'):
-    # init from a given GPT-2 model
+    # init from a given GPT-2 model (only works with GPT model type)
+    if model_type != 'gpt':
+        raise ValueError(f"GPT-2 pretrained models only work with model_type='gpt', got '{model_type}'")
     model = GPT.from_pretrained(init_from, dict(dropout=0.0))
 
 model.eval()

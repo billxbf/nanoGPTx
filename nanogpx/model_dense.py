@@ -1,11 +1,12 @@
 """
-Enhanced GPT (dense), all in this single file.
+Modern GPT (dense), all in this single file.
 References:
 1) the official GPT-2 TensorFlow implementation released by OpenAI:
 https://github.com/openai/gpt-2/blob/master/src/model.py
 2) huggingface/transformers PyTorch implementation:
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
 https://github.com/huggingface/transformers/blob/v4.53.3/src/transformers/models/qwen3/modeling_qwen3.py
+https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3/modeling_open_llama.py
 """
 
 import math
@@ -16,8 +17,10 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+# -----------------------------------------------------------------------------
+## RMSNorm instead of LayerNorm
 class RMSNorm(nn.Module):
-    """ Root Mean Square Normalization"""
+    """ Root Mean Square Normalization (https://arxiv.org/abs/1910.07467)"""
     def __init__(self, ndim, eps=1e-6):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(ndim))
@@ -30,22 +33,108 @@ class RMSNorm(nn.Module):
         input = input * torch.rsqrt(variance + self.eps)
         return self.weight * input.to(input_dtype)
 
+# -----------------------------------------------------------------------------
+# Rotary Position Embedding (RoPE) instead of absolute positional embeddings
+class RotaryEmbedding(nn.Module):
+    """ Rotary Position Embedding (RoPE), borrowed from openllama implementation."""
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+        super().__init__()
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+        freqs = torch.outer(t, self.inv_freq)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype),
+            self.sin_cached[:seq_len].to(dtype=x.dtype),
+        )
+
+
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2] 
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
+    cos = cos[position_ids].unsqueeze(1)
+    sin = sin[position_ids].unsqueeze(1)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
+# -----------------------------------------------------------------------------
+# Repeat key-value pairs for Grouped Query Attention (GQA)
+def repeat_kv(hidden_states, n_rep):
+    """
+    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
+    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
+    """
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+# -----------------------------------------------------------------------------
 
 class CausalSelfAttention(nn.Module):
 
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
-        # output projection
+        assert config.n_embd % config.n_kv_head == 0
+        
+        self.n_head = config.n_head  # number of query heads
+        self.n_kv_head = config.n_kv_head  # number of key-value heads
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+        self.head_dim = self.n_embd // self.n_head
+        self.n_rep = self.n_head // self.n_kv_head  # repetition factor for k,v heads
+        
+        # separate projections for Q, K, V to support different head counts
+        self.q_proj = nn.Linear(config.n_embd, self.n_head * self.head_dim, bias=config.bias)
+        self.k_proj = nn.Linear(config.n_embd, self.n_kv_head * self.head_dim, bias=config.bias)
+        self.v_proj = nn.Linear(config.n_embd, self.n_kv_head * self.head_dim, bias=config.bias)
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+
+        # normalize q and k pre-attention, borrowed from Qwen3
+        self.q_norm = RMSNorm(self.head_dim, eps=config.rms_eps)  # unlike olmo, only on the head dim!
+        self.k_norm = RMSNorm(self.head_dim, eps=config.rms_eps)  # thus post q_norm does not need reshape
+        
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
-        self.dropout = config.dropout
+        
+        # Initialize rotary embedding
+        self.rotary_emb = RotaryEmbedding(
+            self.head_dim,
+            max_position_embeddings=config.max_position_embeddings,
+            base=config.rope_theta,
+        )
+        
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -57,13 +146,26 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        # calculate query, key, values with separate projections for GQA
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+        
+        # reshape and transpose to get head dimension
+        q = self.q_norm(q.view(B, T, self.n_head, self.head_dim)).transpose(1, 2)  # (B, n_head, T, head_dim)
+        k = self.k_norm(k.view(B, T, self.n_kv_head, self.head_dim)).transpose(1, 2)  # (B, n_kv_head, T, head_dim)
+        v = v.view(B, T, self.n_kv_head, self.head_dim).transpose(1, 2)  # (B, n_kv_head, T, head_dim)
 
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # apply rotary position embedding
+        cos, sin = self.rotary_emb(q, seq_len=T)
+        position_ids = torch.arange(T, device=x.device, dtype=torch.long).unsqueeze(0)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin, position_ids)
+
+        # repeat k and v to match the number of query heads
+        k = repeat_kv(k, self.n_rep)  # (B, n_head, T, head_dim)
+        v = repeat_kv(v, self.n_rep)  # (B, n_head, T, head_dim)
+
+        # causal self-attention; Self-attend: (B, n_head, T, head_dim) x (B, n_head, head_dim, T) -> (B, n_head, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
@@ -73,7 +175,7 @@ class CausalSelfAttention(nn.Module):
             att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
-            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+            y = att @ v # (B, n_head, T, T) x (B, n_head, T, head_dim) -> (B, n_head, T, head_dim)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
@@ -81,17 +183,20 @@ class CausalSelfAttention(nn.Module):
         return y
 
 class MLP(nn.Module):
-
+    """ A simple MLP with SwiGLU activation (https://arxiv.org/abs/1612.08083) """
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-        self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        # andrej used 2 projections (each 4d^2 params) in the original MLP  (8d^2 ttl.)
+        # but swiglu has 3 projections, so let's change expansion factor to 3 for closer n_param (9d^2 ttl.)
+        # might be a bad idea for parallelism though
+        self.gate_proj = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_fc = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.silu = nn.SiLU() # swish activation function 
+        self.c_proj = nn.Linear(3 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        x = self.c_fc(x)
-        x = self.gelu(x)
+        x = self.c_fc(x) * self.silu(self.gate_proj(x))
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
@@ -115,11 +220,14 @@ class GPXConfig:
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
-    n_head: int = 12
+    n_head: int = 12  # number of query heads
+    n_kv_head: int = 4  # number of key-value heads for GQA (set to n_head for MHA, 1 for MQA)
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = False  # enable bias in linear layers
     rms_eps: float = 1e-6 # RMSNorm variance epsilon
+    rope_theta: float = 10000.0  # RoPE theta parameter
+    max_position_embeddings: int = 2048  # maximum sequence length for RoPE. set to be >= block_size to avoid runtime recomputing
 
 class GPX(nn.Module):
 
@@ -131,7 +239,6 @@ class GPX(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = RMSNorm(config.n_embd, eps=config.rms_eps),
@@ -153,16 +260,8 @@ class GPX(nn.Module):
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
-    def get_num_params(self, non_embedding=True):
-        """
-        Return the number of parameters in the model.
-        For non-embedding count (default), the position embeddings get subtracted.
-        The token embeddings would too, except due to the parameter sharing these
-        params are actually used as weights in the final layer, so we include them.
-        """
+    def get_num_params(self):
         n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
     def _init_weights(self, module):
@@ -177,12 +276,10 @@ class GPX(nn.Module):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        x = self.transformer.drop(tok_emb) 
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
@@ -204,7 +301,6 @@ class GPX(nn.Module):
         # but want to use a smaller block size for some smaller, simpler model
         assert block_size <= self.config.block_size
         self.config.block_size = block_size
-        self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
         for block in self.transformer.h:
             if hasattr(block.attn, 'bias'):
                 block.attn.bias = block.attn.bias[:,:,:block_size,:block_size]

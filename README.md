@@ -1,9 +1,9 @@
 
 # nanoGPX
 
-Cleanest collections of modern LLM architectures and recipes (MoE, SSM, RoPE, RMSNorm, etc.) in [nanoGPT](https://github.com/karpathy/nanoGPT) style.
+The cleanest collection of modern LLM recipes (RoPE, GQA, RMSNorm, MoE, SSM, etc.) in [nanoGPT](https://github.com/karpathy/nanoGPT) style.
 
-![nanoGPT](assets/nanogpt.jpg)
+<img src="assets/nanogpx.png" alt="nanoGPX" width="50%" />
 
 
 <!-- The simplest, fastest repository for training/finetuning medium-sized GPTs. It is a rewrite of [minGPT](https://github.com/karpathy/minGPT) that prioritizes teeth over education. Still under active development, but currently the file `train.py` reproduces GPT-2 (124M) on OpenWebText, running on a single 8XA100 40GB node in about 4 days of training. The code itself is plain and readable: `train.py` is a ~300-line boilerplate training loop and `model.py` a ~300-line GPT model definition, which can optionally load the GPT-2 weights from OpenAI. That's it. -->
@@ -11,17 +11,17 @@ Cleanest collections of modern LLM architectures and recipes (MoE, SSM, RoPE, RM
 
 **NanoGPX** overwrites Andrej's [nanoGPT](https://github.com/karpathy/nanoGPT), implementing state-of-the-art recipes commonly adopted by modern LLM architectures such as [Qwen3](https://arxiv.org/abs/2505.09388). The code inherits nanoGPT's single-file and hackable style and are tested on the same training datasets (OpenWebText) for performance comparison.
 
-- [ ] RoPE (Rotary Positional Embeddings)
-- [ ] GQA (Grouped Query Attention)
-- [ ] SwiGLU
-- [ ] RMSNorm 
+- [x] RoPE (Rotary Positional Embeddings)
+- [x] GQA (Grouped Query Attention)
+- [x] SwiGLU activation
+- [x] RMSNorm
 - [ ] MoE (Mixture of Expert)
 - [ ] Hybrid SSM (State Space Model)
 
 
-![repro124m](assets/gpt2_124M_loss.png)
+<!-- ![repro124m](assets/gpt2_124M_loss.png) -->
 
-
+<!-- 
 ## install
 
 ```
@@ -51,13 +51,13 @@ This creates a `train.bin` and `val.bin` in that data directory. Now it is time 
 **I have a GPU**. Great, we can quickly train a baby GPT with the settings provided in the [config/train_shakespeare_char.py](config/train_shakespeare_char.py) config file:
 
 ```sh
-python train.py config/train_shakespeare_char.py
+python train.py config/model/gpt_baby.py config/train_shakespeare_char.py
 ```
 
 If you peek inside it, you'll see that we're training a GPT with a context size of up to 256 characters, 384 feature channels, and it is a 6-layer Transformer with 6 heads in each layer. On one A100 GPU this training run takes about 3 minutes and the best validation loss is 1.4697. Based on the configuration, the model checkpoints are being written into the `--out_dir` directory `out-shakespeare-char`. So once the training finishes we can sample from the best model by pointing the sampling script at this directory:
 
 ```sh
-python sample.py --out_dir=out-shakespeare-char
+python sample.py --out_dir=out-shakespeare-char --model_type=gpt
 ```
 
 This generates a few samples, for example:
@@ -237,4 +237,4 @@ For more questions/discussions feel free to stop by **#nanoGPT** on Discord:
 
 ## acknowledgements
 
-All nanoGPT experiments are powered by GPUs on [Lambda labs](https://lambdalabs.com), my favorite Cloud GPU provider. Thank you Lambda labs for sponsoring nanoGPT!
+All nanoGPT experiments are powered by GPUs on [Lambda labs](https://lambdalabs.com), my favorite Cloud GPU provider. Thank you Lambda labs for sponsoring nanoGPT! -->
