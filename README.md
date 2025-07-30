@@ -4,7 +4,7 @@
 The cleanest collection of modern LLM recipes (RoPE, GQA, RMSNorm, MoE, SSM, etc.) in [nanoGPT](https://github.com/karpathy/nanoGPT) style.
 
 <p align="center">
-    <img src="assets/nanogpx.png" alt="nanoGPX" width="80%" />
+    <img src="assets/nanogpx.png" alt="nanoGPX" width="100%" />
 </p>
 
 
