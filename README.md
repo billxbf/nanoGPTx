@@ -1,7 +1,9 @@
 
-# nanoGPX (👷‍♂️ under construction)
+# nanoGPX
 
 The cleanest collection of modern LLM recipes (RoPE, GQA, RMSNorm, MoE, SSM, etc.) in [nanoGPT](https://github.com/karpathy/nanoGPT) style.
+
+(👷‍♂️ under construction)
 
 <p align="center">
     <img src="assets/nanogpx.png" alt="nanoGPX" width="100%" />
@@ -19,6 +21,7 @@ The cleanest collection of modern LLM recipes (RoPE, GQA, RMSNorm, MoE, SSM, etc
 - [x] RMSNorm
 - [ ] MoE (Mixture of Expert)
 - [ ] Hybrid SSM (State Space Model)
+- [ ] Muon Optimizer
 
 
 <!-- ![repro124m](assets/gpt2_124M_loss.png) -->
